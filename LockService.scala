@@ -27,7 +27,9 @@ class LockServer (system: ActorSystem, t: Int) extends Actor {
 
   val generator = new scala.util.Random
   var lockMap = new mutable.HashMap[BigInt, BigInt]()
+  var participantMap = new mutable.HashMap[String, BigInt]()
   var clientServers: Seq[ActorRef] = null
+  var groupServers: Seq[ActorRef] = null
   implicit val timeout = Timeout(t seconds)
   private val master_lock = new Object()
   var flag: Int = 0
@@ -35,7 +37,12 @@ class LockServer (system: ActorSystem, t: Int) extends Actor {
   def receive() = {
     case View(clients: Seq[ActorRef]) =>
       clientServers = clients
+
+    case ViewGS(clients: Seq[ActorRef]) =>
+      groupServers = clients
+    
     case Acquire(lock: BigInt, id: BigInt) => {
+      // init(sender, id)
       sender ! acquire(sender, lock, id) 
     }
     case Release(lock: BigInt, id: BigInt) => {

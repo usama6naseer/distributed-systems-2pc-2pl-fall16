@@ -6,6 +6,7 @@ sealed trait AppServiceAPI
 case class Prime() extends AppServiceAPI
 case class Command() extends AppServiceAPI
 case class View(endpoints: Seq[ActorRef]) extends AppServiceAPI
+case class ViewGS(endpoints: Seq[ActorRef]) extends AppServiceAPI
 
 /**
  * This object instantiates the service tiers and a load-generating master, and
@@ -49,6 +50,7 @@ object KVAppService {
       store ! View(stores)
 
     lock_server ! View(store_clients)
+    lock_server ! ViewGS(servers)
 
     /** Load-generating master */
     val master = system.actorOf(LoadMaster.props(numNodes, servers, ackEach), "LoadMaster")

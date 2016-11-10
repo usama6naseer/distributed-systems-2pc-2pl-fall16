@@ -18,6 +18,7 @@ case class Prepared(key: BigInt, value: Any, tid: BigInt) extends KVClientAPI
 case class Read(key: BigInt, tid: BigInt) extends KVClientAPI
 case class Write(key: BigInt, value: Any, tid: BigInt) extends KVClientAPI
 case class EndTransaction(tid: BigInt) extends KVClientAPI
+case class Tick() extends KVClientAPI
 
 
 class AnyMap extends scala.collection.mutable.HashMap[BigInt, Any]
@@ -44,6 +45,9 @@ class KVClient (stores: Seq[ActorRef], lock_server: ActorRef) extends Actor {
     case View(e) => {
       endpoints = Some(e)
     }
+    case Tick() => {
+      println("tick called by ", sender.path.name)
+    }
     case ChangeCache(key, value, tid) => {
     	cache.put(key,value)
     }
@@ -64,7 +68,7 @@ class KVClient (stores: Seq[ActorRef], lock_server: ActorRef) extends Actor {
       }
     }
     case Abort(key, value, tid) => {
-    	println("abort called", sender.path.name)
+    	println("abort called", sender.path.name, key, value)
     	count_no.put(tid,1)
     	var temp = count_vote.get(tid)
     	count_vote.put(tid,temp.get + 1)
@@ -75,14 +79,18 @@ class KVClient (stores: Seq[ActorRef], lock_server: ActorRef) extends Actor {
 				i ! Abort(key, value, tid)
 			}
     	}
+    	count_vote.put(tid,0)
+   		count_no.put(tid, 0)
     }
     case Commit(key, value, tid) => {
-    	println("commit called", sender.path.name)
+    	println("commit called", sender.path.name, key, value)
     	var temp = count_vote.get(tid)
     	count_vote.put(tid,temp.get + 1)
     	println(temp.get + 1)
     	if (temp.get+1 == stores.size) {
     		temp = count_no.get(tid)
+    		count_vote.put(tid,0)
+    		count_no.put(tid, 0)
     		if (temp.get > 0) {
     			println(s"Transaction $tid aborted. send abort to all participants.")
     			for (i <- stores) {
@@ -104,7 +112,13 @@ class KVClient (stores: Seq[ActorRef], lock_server: ActorRef) extends Actor {
     case EndTransaction(tid) => {
     	var temp_map = tid_dirtyset.get(tid)
 	    // temp_map = temp_map.get
-    	push(temp_map.get, tid)
+	    // println(temp_map)
+	    // for ((key, v) <- temp_map.get) {
+	    // 	println("^^**^^  ",key,v)
+	    // }
+	    if (!temp_map.isEmpty) {
+	    	push(temp_map.get, tid)
+	    }
     	lock_server ! ReleaseAll(tid)
 	    // val future = ask(lock_server, Release(key, tid)).mapTo[Boolean]
     	// val done = Await.result(future, 30 seconds)
@@ -173,38 +187,6 @@ class KVClient (stores: Seq[ActorRef], lock_server: ActorRef) extends Actor {
   	lock_server ! ReleaseAll(tid)
   	sender ! false
   }
- //  def two_pc(tid: BigInt): Unit = {
- //  	var temp_map = tid_dirtyset.get(tid)
- //  	for (i <- stores) {
- //  		i ! 
- //  	}
-	// for (i <- endpoints.get) {
- //   	  println("in 2pc")
- //   	  i ! Begin(key, value, tid)
-	//   val future = ask(i, Begin(key, value, tid)).mapTo[Boolean]
-	//   val done = Await.result(future, 5 seconds)
-	//   println("response:", done.toString)
-	//   if (!done) {
-	//     abort and end
-	//     false
-	//   } 
-	//   else {
-	//     carry on
-	//   }
- //    }
- //    val future = ask(lock_server, Acquire(key, tid)).mapTo[Boolean]
- //    val done = Await.result(future, timeout.duration)
- //    if (done) {
- //      println("Lock granted:", key, tid)
- //      write(key, value, dirtyset, tid)
- //      push(dirtyset, tid)
- //    }
- //    else {
- //      println("Lock grant failed:", key, tid)	
- //    }
- //    true
- //  }
-
 
   import scala.concurrent.ExecutionContext.Implicits.global
 
@@ -229,11 +211,15 @@ class KVClient (stores: Seq[ActorRef], lock_server: ActorRef) extends Actor {
 
   /** Push a dirtyset of cached writes through to the server. */
   def push(dirtyset: AnyMap, tid: BigInt) = {
-    val futures = for ((key, v) <- dirtyset)
+    for ((key, v) <- dirtyset) {
       // directWrite(key, v, tid)
       for (i <- stores) {
-	    i ! Begin(key, v, tid) // store replies either commit or abort
+      	println("^^**^^  ",key,v)
+	    // i ! Begin(key, v, tid) // store replies either commit or abort
+	    val future = ask(i, Begin(key, v, tid)).mapTo[Any]
+	    Await.result(future, 30 seconds)
 	  }
+	}
     dirtyset.clear()
     var temp_map = new AnyMap
     tid_dirtyset.put(tid, temp_map)
